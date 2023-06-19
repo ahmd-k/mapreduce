@@ -1,10 +1,15 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
-
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"io/ioutil"
+	"log"
+	"net/rpc"
+	"os"
+	"time"
+)
 
 //
 // Map functions return a slice of KeyValue.
@@ -24,7 +29,6 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
@@ -33,32 +37,58 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	// Your worker implementation here.
 
-	// uncomment to send the Example RPC to the master.
-	// CallExample()
+	for true {
+		// request task
+		taskRequest := TaskRequest{} // not sure what information we need to send here
+		task := Task{}
+		// TODO: handle the error case
+		call("Master.GetTask", &taskRequest, &task)
 
-}
+		if task.Type == "map" {
+			// should we read from the file to get contents, or get contents from master?
 
-//
-// example function to show how to make an RPC call to the master.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func CallExample() {
+			// read input file contents
+			file, err := os.Open(task.Filename)
+			if err != nil {
+				log.Fatalf("cannot open %v", task.Filename)
+			}
+			content, err := ioutil.ReadAll(file)
+			if err != nil {
+				log.Fatalf("cannot read %v", task.Filename)
+			}
+			file.Close()
 
-	// declare an argument structure.
-	args := ExampleArgs{}
+			// call Map function
+			output := mapf(task.Filename, string(content))
 
-	// fill in the argument(s).
-	args.X = 99
+			// make nReduce intermediate files
+			var ofiles []*os.File
+			for i := 0; i < task.NReduce; i++ {
+				oname := fmt.Sprintf("mr-%d-%d", task.N, i)
+				ofile, _ := os.Create(oname)
+				ofiles = append(ofiles, ofile)
+			}
 
-	// declare a reply structure.
-	reply := ExampleReply{}
+			// write each keyVal pair to the appropriate file based on hash
+			for _, kv := range output {
+				enc := json.NewEncoder(ofiles[ihash(kv.Key)%task.NReduce])
+				err := enc.Encode(&kv)
+				if err != nil {
+					log.Fatalf("cannot encode json to intermediate file")
+				}
+			}
 
-	// send the RPC request, wait for the reply.
-	call("Master.Example", &args, &reply)
+			// notify master that the task is finished
+			finishTaskRequest := FinishTaskRequest{}
+			finishTaskReply := FinishTaskReply{}
+			call("Master.FinishTask", &finishTaskRequest, &finishTaskReply)
+		} else {
+			fmt.Printf("Unrecognized task type\n")
+		}
 
-	// reply.Y should be 100.
-	fmt.Printf("reply.Y %v\n", reply.Y)
+		// wait for a sec before asking for another task
+		time.Sleep(1 * time.Second)
+	}
 }
 
 //

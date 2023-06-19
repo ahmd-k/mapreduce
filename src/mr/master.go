@@ -1,29 +1,51 @@
 package mr
 
-import "log"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
-
+import (
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+	"sync"
+)
 
 type Master struct {
-	// Your definitions here.
-
+	mapTasks       []int // index of file to map
+	activeMapTasks []int
+	mapFiles       []string
+	nReduce        int
+	mutex          sync.Mutex
 }
 
-// Your code here -- RPC handlers for the worker to call.
-
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
+func (m *Master) GetTask(args *TaskRequest, reply *Task) error {
+	m.mutex.Lock()
+	if len(m.mapTasks) > 0 {
+		reply.Type = "map"
+		reply.N = m.mapTasks[0]
+		reply.Filename = m.mapFiles[m.mapTasks[0]]
+		reply.NReduce = m.nReduce
+		m.activeMapTasks = append(m.activeMapTasks, m.mapTasks[0])
+		m.mapTasks = m.mapTasks[1:]
+	} else if len(m.activeMapTasks) > 0 {
+		// TODO
+	}
+	m.mutex.Unlock()
 	return nil
 }
 
+func (m *Master) FinishTask(args *FinishTaskRequest, reply *FinishTaskReply) error {
+	// if we find the finished task in the active list, remove it
+	// this could be easily improved with a dictionary lookup later
+	m.mutex.Lock()
+	for i := 0; i < len(m.activeMapTasks); i++ {
+		if args.N == m.activeMapTasks[i] {
+			m.activeMapTasks = append(m.activeMapTasks[:i], m.activeMapTasks[i+1:]...)
+			break
+		}
+	}
+	m.mutex.Unlock()
+	return nil
+}
 
 //
 // start a thread that listens for RPCs from worker.go
@@ -50,7 +72,6 @@ func (m *Master) Done() bool {
 
 	// Your code here.
 
-
 	return ret
 }
 
@@ -61,9 +82,13 @@ func (m *Master) Done() bool {
 //
 func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{}
+	m.mapFiles = files
+	m.nReduce = nReduce
 
 	// Your code here.
-
+	for i := 0; i < len(files); i++ {
+		m.mapTasks = append(m.mapTasks, i)
+	}
 
 	m.server()
 	return &m
