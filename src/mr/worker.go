@@ -36,14 +36,14 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-
 	for true {
 		// request task
 		taskRequest := TaskRequest{} // not sure what information we need to send here
 		task := Task{}
 		// TODO: handle the error case
+		fmt.Print("Requesting task from master\n")
 		call("Master.GetTask", &taskRequest, &task)
-
+		fmt.Printf("Received a %v task\n", task.Type)
 		if task.Type == "map" {
 			// should we read from the file to get contents, or get contents from master?
 
@@ -80,10 +80,17 @@ func Worker(mapf func(string, string) []KeyValue,
 
 			// notify master that the task is finished
 			finishTaskRequest := FinishTaskRequest{}
+			finishTaskRequest.N = task.N
+			finishTaskRequest.Filename = task.Filename
+
 			finishTaskReply := FinishTaskReply{}
+
 			call("Master.FinishTask", &finishTaskRequest, &finishTaskReply)
+			fmt.Printf("Finished map task %v\n\n", task.N)
+		} else if task.Type == "done" {
+			break
 		} else {
-			fmt.Printf("Unrecognized task type\n")
+			fmt.Print("Unrecognized task type\n")
 		}
 
 		// wait for a sec before asking for another task
